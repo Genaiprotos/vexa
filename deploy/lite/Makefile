@@ -50,6 +50,9 @@ WHISPER_CONTAINER ?= vexa-lite-whisper
 WHISPER_IMAGE    ?= fedirz/faster-whisper-server:latest-cpu
 WHISPER_MODEL    ?= Systran/faster-whisper-tiny.en
 HOST_STT_PORT    ?= 8083
+# Meetings AI keeps model credentials explicit. Never mount a developer's
+# personal Claude subscription into the runtime unless the operator opts in.
+AUTO_MOUNT_CLAUDE ?= 0
 
 define set_tag
 	@echo "Setting '$(1)' → $(2)..."
@@ -120,7 +123,7 @@ up: preflight
 	IMAGE_TAG=$$(envv IMAGE_TAG); IMAGE_TAG=$${IMAGE_TAG:-v012}; \
 	IMG=$$(docker image inspect $(LOCAL_TAG) >/dev/null 2>&1 && echo $(LOCAL_TAG) || echo $(DOCKERHUB_USER)/$(IMAGE_NAME):$$IMAGE_TAG); \
 	CLAUDE_CREDS="$$HOME/.claude/.credentials.json"; \
-	if [ -f "$$CLAUDE_CREDS" ]; then \
+	if [ "$(AUTO_MOUNT_CLAUDE)" = "1" ] && [ -f "$$CLAUDE_CREDS" ]; then \
 		echo "  Detected Claude subscription credentials — mounting into container"; \
 		CLAUDE_MOUNT="-v $$CLAUDE_CREDS:/var/lib/vexa/host-claude-credentials:ro -e HOST_CLAUDE_CREDENTIALS=/var/lib/vexa/host-claude-credentials"; \
 	else \
