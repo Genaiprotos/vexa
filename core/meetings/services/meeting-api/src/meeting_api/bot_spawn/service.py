@@ -419,6 +419,7 @@ async def request_bot(
     transcription_tier: str = "realtime",
     recording_enabled: bool = False,
     transcribe_enabled: bool = True,
+    transcription_override: Optional[dict[str, str | None]] = None,
     automatic_leave: Optional[dict] = None,
     continue_meeting: bool = False,
     max_concurrent: Optional[int] = None,
@@ -495,6 +496,13 @@ async def request_bot(
         # however, is not inferred from its URL: mixed-version identity may return a customer URL
         # without provenance, and guessing there could turn an unknown service into a Vexa charge.
         transcription_provider = "vexa"
+    if transcription_override and transcribe_enabled:
+        # Signed at the HTTP boundary. These three values are one immutable
+        # per-bot route; never borrow the env/account token or model for its URL.
+        transcription_service_url = transcription_override["url"]
+        transcription_service_token = transcription_override["token"]
+        transcription_model = transcription_override["model"]
+        transcription_provider = "customer"
     if transcribe_enabled and not transcription_service_url:
         raise TranscriptionNotConfigured(
             "no transcription backend configured — set it in Settings or environment variables "
@@ -511,7 +519,7 @@ async def request_bot(
     #         client retries; a wrong URL never heals by itself. Only the latter is ours to refuse;
     #       * the ENV backend only — the verdict describes that endpoint, so a Settings-configured
     #         backend (a different endpoint) must never be blocked by the env one's health.
-    if transcribe_enabled and not configured.get("url"):
+    if transcribe_enabled and not configured.get("url") and not transcription_override:
         verdict = cached_probe_verdict("stt", max_age_s=_STT_VERDICT_MAX_AGE_S)
         if verdict is not None and verdict.get("kind") in CONFIG_FAULT_KINDS:
             log_event(
@@ -682,6 +690,8 @@ async def request_bot(
                 "transcribe_enabled": transcribe_enabled,
                 "recording_enabled": recording_enabled,
                 "transcription_provider": transcription_provider,
+                **({"stt_override_profile_id": transcription_override["profile_id"]}
+                   if transcription_override else {}),
                 "service_authority": authority_record,
             },
         )
@@ -693,6 +703,8 @@ async def request_bot(
         meeting_data["recording_enabled"] = recording_enabled
         if transcription_provider is not None:
             meeting_data["transcription_provider"] = transcription_provider
+        if transcription_override:
+            meeting_data["stt_override_profile_id"] = transcription_override["profile_id"]
         meeting_data["service_authority"] = authority_record
         # The serialization key for authenticated spawns — find_active_by_userdata matches on it.
         if authenticated and auth_userdata_path:

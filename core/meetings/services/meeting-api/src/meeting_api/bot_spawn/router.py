@@ -44,6 +44,7 @@ from .service import (
     request_bot,
     resolve_teams_base_host,
 )
+from .signed_stt import InvalidSignedSTT, verify_signed_stt
 
 #: Max length of a native meeting id, mirroring the `meetings.platform_specific_id`
 #: varchar(255) column. Bounded at the request boundary so an over-long id is a typed
@@ -444,6 +445,14 @@ def build_router(
             )
 
         transcribe_enabled = _resolve_transcribe_enabled(body.get("transcribe_enabled"))
+        transcription_override = None
+        if "stt_override" in body:
+            if not transcribe_enabled:
+                raise HTTPException(status_code=422, detail="stt_override requires transcription")
+            try:
+                transcription_override = verify_signed_stt(body["stt_override"], meeting_url)
+            except InvalidSignedSTT as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
 
         # THE NAME THIS PERSON'S BOT SHOWS UP AS — an explicit name on THIS request, and nothing
         # else here. `request_bot` fills in this person's default from identity out of the bot
@@ -469,6 +478,7 @@ def build_router(
                 transcription_tier=body.get("transcription_tier", "realtime"),
                 recording_enabled=_resolve_recording_enabled(body.get("recording_enabled")),
                 transcribe_enabled=transcribe_enabled,
+                transcription_override=transcription_override,
                 automatic_leave=_resolve_automatic_leave(body.get("automatic_leave")),
                 # P3c — continue_meeting is accepted off the OPEN api.v1 request body (MeetingCreate
                 # has no additionalProperties:false), so the wire is not rejected; documenting it as

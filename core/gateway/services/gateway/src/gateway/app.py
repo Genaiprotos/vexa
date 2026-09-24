@@ -289,7 +289,10 @@ def create_app(
     # check), no downstream call. 200 + {status:"ok", service:"gateway"} = process is up.
     @app.get("/health")
     async def health():
-        return {"status": "ok", "service": "gateway"}
+        return {
+            "status": "ok", "service": "gateway",
+            "features": {"signed_stt_override": bool(os.getenv("VEXA_STT_OVERRIDE_SECRET"))},
+        }
 
     # --- /auth/me — caller identity from the API key (GET /auth/me with x-api-key →
     # user_id/email/scopes); the dashboard's login + session-validation resolve the user via this.

@@ -7,6 +7,9 @@ is eager-created keyed by the bot's connectionId, and the quota / dedup seams su
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -466,6 +469,50 @@ def test_post_bots_transcribe_with_settings_stt_passes(monkeypatch):
     assert inv["transcriptionServiceUrl"] == "https://stt-settings.example.com"
     row = next(iter(repo._meetings.values()))
     assert row["data"]["transcription_provider"] == "customer"
+
+
+def test_signed_per_bot_stt_route_isolated_from_env_and_not_returned(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", SECRET)
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://deployment.example.test")
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_TOKEN", "deployment-token")
+    monkeypatch.setenv("TRANSCRIPTION_MODEL", "deployment-model")
+    monkeypatch.setenv("VEXA_STT_OVERRIDE_SECRET", "private-route-signing-key")
+    meeting_url = "https://meet.google.com/abc-defg-hij"
+    claims = {
+        "meeting_url": meeting_url,
+        "url": "https://openrouter.ai/api/v1/audio/transcriptions",
+        "model": "economy-stt",
+        "token": "per-bot-token",
+        "profile_id": "profile-one",
+        "expires_at": int(time.time()) + 120,
+    }
+    canonical = json.dumps(claims, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    signed = {**claims, "signature": hmac.new(
+        b"private-route-signing-key", canonical, hashlib.sha256,
+    ).hexdigest()}
+    repo, runtime = InMemoryMeetingRepo(), FakeRuntimeClient()
+    client = _client(repo, runtime)
+    response = client.post("/bots", headers=HEADERS, json={
+        "platform": "google_meet", "native_meeting_id": "abc-defg-hij",
+        "meeting_url": meeting_url, "stt_override": signed,
+    })
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["stt_override_profile_id"] == "profile-one"
+    invocation = json.loads(runtime.specs[0]["env"]["BOT_CONFIG"])
+    assert invocation["transcriptionServiceUrl"] == claims["url"]
+    assert invocation["transcriptionServiceToken"] == claims["token"]
+    assert invocation["transcriptionModel"] == claims["model"]
+    assert "per-bot-token" not in response.text
+    assert "per-bot-token" not in json.dumps(next(iter(repo._meetings.values())))
+
+    bad = {**signed, "model": "attacker-model"}
+    empty_repo = InMemoryMeetingRepo()
+    rejected = _client(empty_repo).post("/bots", headers=HEADERS, json={
+        "platform": "google_meet", "native_meeting_id": "abc-defg-hik",
+        "meeting_url": meeting_url, "stt_override": bad,
+    })
+    assert rejected.status_code == 422
+    assert not empty_repo._meetings
 
 
 # ── Settings → transcription backend: the configured STT (user pref > platform) beats the env ────

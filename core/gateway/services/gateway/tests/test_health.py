@@ -27,3 +27,10 @@ def test_health_needs_no_api_key():
     """Health must be reachable WITHOUT an x-api-key — it is not a client route."""
     client = TestClient(_app())
     assert client.get("/health").status_code == 200
+
+
+def test_health_advertises_signed_stt_only_when_configured(monkeypatch):
+    monkeypatch.delenv("VEXA_STT_OVERRIDE_SECRET", raising=False)
+    assert TestClient(_app()).get("/health").json()["features"]["signed_stt_override"] is False
+    monkeypatch.setenv("VEXA_STT_OVERRIDE_SECRET", "test-only")
+    assert TestClient(_app()).get("/health").json()["features"]["signed_stt_override"] is True
